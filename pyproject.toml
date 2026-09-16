@@ -118,6 +118,16 @@ serve = [
     "msgpack",
     "msgpack-numpy",
 ]
+# HTTP grasp-prediction server (scripts/serve_grasp_predictor.py), speaking the
+# contract in docs/api/predict.md. Install with: uv sync --extra rest
+rest = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "pydantic>=2.5",
+    # fastapi.testclient (used by tests/test_rest_server.py) needs an HTTP
+    # client; it is not pulled in by fastapi itself.
+    "httpx",
+]
 # TensorRT acceleration for the diffusion denoiser (opt-in). Versions match the
 # installed torch==2.6.0+cu124. Install with: uv sync --extra tensorrt
 tensorrt = [

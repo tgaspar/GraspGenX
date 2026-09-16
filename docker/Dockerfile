@@ -51,6 +51,10 @@ RUN cd /install/Manifold/build && cmake .. -DCMAKE_BUILD_TYPE=Release
 RUN cd /install/Manifold/build && make
 ENV PATH "${PATH}:/install/Manifold/build/"
 
+# REST grasp-prediction server (scripts/serve_grasp_predictor.py). Kept late
+# in the file so it does not invalidate the expensive layers above.
+RUN pip install "fastapi>=0.110" "uvicorn>=0.29" "pydantic>=2.5" httpx
+
 # Final defensive re-pin: any earlier RUN that pulled a transitive newer
 # huggingface-hub / diffusers gets undone here so diffusers==0.11.1 keeps
 # working.

@@ -52,11 +52,12 @@ GraspGenX is a cross-embodiment grasp generation framework that produces high-qu
    - [Scene Point Clouds](#advanced-predicting-grasps-for-objects-from-scene-point-clouds)
 5. [End-to-End Demo And VLA Data Generation](#end-to-end-demos)
 6. [Integrating a New Gripper](#integrating-a-new-gripper)
-7. [Agentic Workflows](#agentic-workflows)
-8. [FAQ](#faq)
-9. [License](#license)
-10. [Citation](#citation)
-11. [Contact](#contact)
+7. [REST API Server](#rest-api-server)
+8. [Agentic Workflows](#agentic-workflows)
+9. [FAQ](#faq)
+10. [License](#license)
+11. [Citation](#citation)
+12. [Contact](#contact)
 
 ## Release News
 
@@ -277,6 +278,97 @@ If you've onboarded a gripper that isn't already in [`gripper_descriptions`](htt
 
 Procedural gripper meshes and URDFs are stored under `assets/proc_grippers/`, organized by kinematic family. Each gripper directory contains the URDF, collision meshes, and swept volume point cloud.
 
+
+## REST API Server
+
+`scripts/serve_grasp_predictor.py` serves a GraspGenX checkpoint over HTTP.
+It speaks the request/response contract in
+[`docs/api/predict.md`](docs/api/predict.md) — the **same contract as the
+DexGraspNet 2.0 server** — so one ROS 2 client can be pointed at either
+backend without code changes. Send a segmented object point cloud, get back a
+ranked list of 6-DoF grasps in the input frame.
+
+Install the extra dependencies with `uv sync --extra rest` (the Docker image
+already has them).
+
+### Run it
+
+```bash
+docker run --rm --gpus all --ipc=host --network host \
+  --user "$(id -u):$(id -g)" \
+  -e HOME=/tmp \
+  -e PYTHONPATH=/code \
+  -v /path/to/GraspGenX:/code \
+  -w /code \
+  x_grasp:3.0 \
+  python scripts/serve_grasp_predictor.py \
+    --gripper arx_x5 \
+    --host 0.0.0.0 \
+    --port 8000
+```
+
+Checkpoints and gripper assets are resolved automatically from
+`ext/graspgenx_checkpoints` and `ext/gripper_descriptions` (see [Setup
+Checkpoints and Gripper Assets](#setup-checkpoints-and-gripper-assets)); the
+bind mount above makes them visible inside the container. The model loads
+before the port opens, so a successful connection means the server is ready —
+roughly 40 s including the startup warmup inference.
+
+### Endpoints
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /predict` | Object point cloud (+ optional scene clutter) → ranked grasps |
+| `GET /healthz` | Liveness probe |
+| `GET /config` | Active gripper, checkpoint, frame convention, point-count limits |
+| `GET /version` | Build metadata |
+
+```bash
+curl -s localhost:8000/config | python -m json.tool
+```
+
+### Grasp frame
+
+GraspGenX natively predicts the pose of the gripper's **base link** with
+**+Z = approach** and **+X = jaw-closing**. Since other stacks label the same
+physical pose differently, the server can emit any of three conventions:
+
+| `--grasp-frame` | Approach | Jaw | For |
+|---|---|---|---|
+| `dexgraspnet2` *(default)* | +X | +Y | Drop-in for a DexGraspNet 2.0 client |
+| `graspgenx` | +Z | +X | The model-native pose |
+| `tcp_z_approach` | +Z | +Y | Robot TCPs with Z along the fingers |
+
+`--tcp-offset <m>` (or `--tcp-at-fingertip`) shifts the returned origin along
+the approach axis — use it to report your hand's actual TCP rather than the
+gripper base. `/config` reports `grasp_frame`, `approach_axis_local`,
+`jaw_axis_local`, `tcp_offset` and `grasp_reference` so a client can adapt
+automatically instead of hardcoding a convention.
+
+### Clutter
+
+Passing `scene_points` alongside `point_cloud` makes the server collision-check
+each predicted grasp's gripper mesh against the surrounding geometry and drop
+the blocked ones. This is most useful for bin picking and dense clutter. For an
+isolated object on a table, leave it out: the fingers legitimately come within
+a millimeter or two of the support surface, so a geometric filter rejects
+almost everything unless you strip the support plane client-side first.
+`meta.num_collision_rejected` tells you how many were dropped.
+
+### Trying it against live ROS 2 data
+
+`scripts/dev_ros2_predict_smoke_test.py` is a throwaway dev tool that pulls a
+depth image, camera info and a segmentation mask off the ROS 2 graph, builds
+the request exactly as a real client would, and prints the result with
+self-consistency checks. It works against either backend:
+
+```bash
+source /opt/ros/jazzy/setup.bash
+python scripts/dev_ros2_predict_smoke_test.py --url http://localhost:8000 --publish
+```
+
+See [`docs/api/predict.md`](docs/api/predict.md) for the full schema, the
+error table, and the behavioural differences from DexGraspNet 2.0.
 
 ## Agentic Workflows
 

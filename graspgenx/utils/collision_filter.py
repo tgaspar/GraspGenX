@@ -52,9 +52,9 @@ def filter_colliding_grasps(
         num_collision_samples: number of points sampled on the gripper. Used
                                only when ``gripper_surface_points`` is None.
         batch_size: grasps per vectorized cdist call. The per-call distance
-                    matrix is ``batch_size * M * N`` fp32 entries — keep
-                    ``batch_size * M * N * 4 bytes`` under available GPU
-                    memory. Default 16 ≈ 1 GB at M=2000, N=8192.
+                    matrix is ``batch_size * M * N`` fp64 entries — keep
+                    ``batch_size * M * N * 8 bytes`` under available GPU
+                    memory. Default 16 ≈ 2 GB at M=2000, N=8192.
         gripper_surface_points: optional (M, 3) array of pre-sampled gripper
                                 surface points in gripper-local frame. When
                                 supplied, the per-call
@@ -93,12 +93,21 @@ def filter_colliding_grasps(
     else:
         device = torch.device(device)
 
-    scene_t = torch.as_tensor(scene_pc, dtype=torch.float32, device=device)  # (N, 3)
+    # float64 throughout, deliberately. torch.cdist expands ||a-b||^2 as
+    # ||a||^2 + ||b||^2 - 2a.b; in fp32 that cancels catastrophically for the
+    # near-touching points this filter exists to detect, returning 0.0 for
+    # pairs really ~1 mm apart (errors up to ~24 mm measured on tabletop
+    # scenes) and marking every grasp as colliding. fp64 keeps the same fast
+    # matmul path and is exact to well under a micron here, at ~2x the memory
+    # and ~2x the time of the (wrong) fp32 result — far cheaper than forcing
+    # cdist's direct path, which costs ~17x.
+    dtype = torch.float64
+    scene_t = torch.as_tensor(scene_pc, dtype=dtype, device=device)  # (N, 3)
     pts_local = torch.as_tensor(
-        gripper_surface_points, dtype=torch.float32, device=device
+        gripper_surface_points, dtype=dtype, device=device
     )  # (M, 3)
     poses = torch.as_tensor(
-        np.asarray(grasp_poses, dtype=np.float32), dtype=torch.float32, device=device
+        np.asarray(grasp_poses, dtype=np.float64), dtype=dtype, device=device
     )  # (K, 4, 4)
 
     R = poses[:, :3, :3]  # (K, 3, 3)

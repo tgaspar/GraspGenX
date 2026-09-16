@@ -173,6 +173,14 @@ class ServerState:
     requests_jsonl: Optional[Path] = None
     dump_npz: bool = False
 
+    # Live viser web visualizer (optional).
+    viser_server: Any = None
+    viser_port: Optional[int] = None
+    viser_top_k: int = 10
+    viser_max_points: int = 40000
+    viser_lock: Any = None
+    viser_status: Any = None
+
 
 STATE = ServerState()
 
@@ -467,6 +475,135 @@ def _dump_npz(
 
 
 # ---------------------------------------------------------------------------
+# Live viser visualizer
+# ---------------------------------------------------------------------------
+
+
+def _start_viser(port: int) -> Any:
+    """Bring up the viser web server. Returns None if it cannot start —
+    visualization must never prevent the inference server from serving."""
+    try:
+        from graspgenx.utils.viser_utils import create_visualizer
+
+        vis = create_visualizer(port=port)
+        logger.info(f"Viser visualizer available at http://<host>:{port}")
+        return vis
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"Could not start the viser visualizer on port {port}: {exc}")
+        return None
+
+
+def _update_viser(
+    request_id: str,
+    object_pc: np.ndarray,
+    scene_pts: Optional[np.ndarray],
+    poses_native: np.ndarray,
+    scores: np.ndarray,
+    tags: List[str],
+    num_collision_rejected: int,
+) -> None:
+    """Render the last request into the viser scene.
+
+    Poses must be in the GraspGenX *native* frame (+Z approach, +X jaw) —
+    that is what the gripper mesh and the control-point helpers expect,
+    regardless of which convention the HTTP response is emitted in.
+
+    Every failure path here is swallowed: a broken visualizer must not turn a
+    successful prediction into a 500.
+    """
+    vis = STATE.viser_server
+    if vis is None:
+        return
+    try:
+        from graspgenx.utils.viser_utils import (
+            get_color_from_score,
+            make_frame,
+            visualize_mesh,
+            visualize_pointcloud,
+            visualize_x_grasp,
+        )
+
+        rng = np.random.default_rng(0)
+
+        def _thin(pc, budget):
+            if len(pc) <= budget:
+                return pc
+            return pc[rng.choice(len(pc), budget, replace=False)]
+
+        with STATE.viser_lock:
+            vis.scene.reset()
+            make_frame(vis, "world", h=0.1, radius=0.004)
+
+            # Clutter first, dim, so the target reads as the subject.
+            if scene_pts is not None and len(scene_pts):
+                visualize_pointcloud(
+                    vis,
+                    "scene",
+                    _thin(scene_pts, STATE.viser_max_points),
+                    color=[90, 95, 105],
+                    size=0.0015,
+                )
+            visualize_pointcloud(
+                vis,
+                "object",
+                _thin(object_pc, STATE.viser_max_points),
+                color=[240, 165, 50],
+                size=0.0025,
+            )
+
+            top = poses_native[: STATE.viser_top_k]
+            if len(top):
+                # Same red->green score ramp the demo scripts use.
+                colors = get_color_from_score(
+                    scores[: STATE.viser_top_k], use_255_scale=True
+                )
+                for i, pose in enumerate(top):
+                    tag = tags[i] if i < len(tags) else "diff"
+                    visualize_x_grasp(
+                        vis,
+                        f"grasps/{tag}/{i:03d}_score_{scores[i]:.3f}",
+                        np.asarray(pose, dtype=np.float64),
+                        color=np.asarray(colors[i]).tolist(),
+                        gripper_info=STATE.gripper,
+                    )
+                # Solid gripper at the single best grasp, for scale and to
+                # make it obvious which way the hand is actually facing.
+                mesh = getattr(STATE.gripper, "visual_mesh", None) or getattr(
+                    STATE.gripper, "collision_mesh", None
+                )
+                if mesh is not None:
+                    visualize_mesh(
+                        vis,
+                        "best_grasp_gripper",
+                        mesh,
+                        color=[70, 130, 220],
+                        transform=np.asarray(top[0], dtype=np.float64),
+                    )
+
+            if STATE.viser_status is not None:
+                STATE.viser_status.content = (
+                    f"**request** `{request_id}`\n\n"
+                    f"**gripper** {STATE.gripper_name} &nbsp; "
+                    f"**planner** {STATE.planner}\n\n"
+                    f"**object points** {len(object_pc)} &nbsp; "
+                    f"**scene points** "
+                    f"{0 if scene_pts is None else len(scene_pts)}\n\n"
+                    f"**grasps shown** {len(top)} of {len(poses_native)} "
+                    f"(collision-rejected {num_collision_rejected})\n\n"
+                    f"**scores** "
+                    + (
+                        f"{scores.min():.3f} – {scores.max():.3f}"
+                        if len(scores)
+                        else "n/a"
+                    )
+                    + "\n\nPoses drawn in the GraspGenX native frame "
+                    "(+Z approach, +X jaw)."
+                )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[{request_id}] viser update failed (non-fatal): {exc}")
+
+
+# ---------------------------------------------------------------------------
 # App factory
 # ---------------------------------------------------------------------------
 
@@ -527,6 +664,7 @@ def build_app() -> FastAPI:
                 "collision_filter" if STATE.scene_collision_filter else "ignored"
             ),
             "supports_category_sampling": False,
+            "viser_port": STATE.viser_port,
         }
 
     # -- /version -----------------------------------------------------------
@@ -699,6 +837,11 @@ def build_app() -> FastAPI:
         if STATE.dump_npz and len(poses) > 0:
             npz_path = _dump_npz(request_id, pc, poses, scores, widths, scene_pts)
 
+        if STATE.viser_server is not None:
+            _update_viser(
+                request_id, pc, scene_pts, poses, scores, tags, num_collision_rejected
+            )
+
         _append_request_log(
             {
                 "request_id": request_id,
@@ -744,6 +887,11 @@ def build_app() -> FastAPI:
                 "planner": STATE.planner,
                 "width_mode": STATE.width_mode,
                 "num_collision_rejected": num_collision_rejected,
+                "viser_url": (
+                    None
+                    if STATE.viser_port is None
+                    else f"http://<server-host>:{STATE.viser_port}"
+                ),
             },
         }
 
@@ -812,6 +960,9 @@ def initialise_state(
     tensorrt_precision: str = "fp32",
     model_commit: str = "",
     warmup: bool = True,
+    viser_port: Optional[int] = None,
+    viser_top_k: int = 10,
+    viser_max_points: int = 40000,
 ) -> None:
     """Load the model + gripper and populate STATE. Call before serving."""
     import os
@@ -924,6 +1075,24 @@ def initialise_state(
                 f"({exc}); falling back to per-request sampling."
             )
             STATE.gripper_surface_points = None
+
+    if viser_port is not None:
+        import threading
+
+        STATE.viser_port = int(viser_port)
+        STATE.viser_top_k = int(viser_top_k)
+        STATE.viser_max_points = int(viser_max_points)
+        STATE.viser_lock = threading.Lock()
+        STATE.viser_server = _start_viser(int(viser_port))
+        if STATE.viser_server is not None:
+            try:
+                STATE.viser_status = STATE.viser_server.gui.add_markdown(
+                    "Waiting for the first `/predict` request…"
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(f"viser GUI panel unavailable: {exc}")
+        else:
+            STATE.viser_port = None
 
     if warmup:
         _run_warmup()

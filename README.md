@@ -304,7 +304,8 @@ docker run --rm --gpus all --ipc=host --network host \
   python scripts/serve_grasp_predictor.py \
     --gripper arx_x5 \
     --host 0.0.0.0 \
-    --port 8000
+    --port 8000 \
+    --viser-port 8080
 ```
 
 Checkpoints and gripper assets are resolved automatically from
@@ -354,6 +355,21 @@ isolated object on a table, leave it out: the fingers legitimately come within
 a millimeter or two of the support surface, so a geometric filter rejects
 almost everything unless you strip the support plane client-side first.
 `meta.num_collision_rejected` tells you how many were dropped.
+
+### Web visualizer
+
+Pass `--viser-port 8080` and the server also serves a live [viser](https://viser.studio/)
+scene at `http://<host>:8080`. Every `/predict` call re-renders it: the target
+cloud in orange, the scene clutter in grey, the top grasps as score-coloured
+gripper outlines, and a solid gripper mesh at the best one, plus a side panel
+with the request id, point counts and score range. Open it in a browser and
+leave it up while your client runs — it is the quickest way to see whether the
+poses coming back actually make sense on the object.
+
+Poses are drawn in the GraspGenX **native** frame (+Z approach, +X jaw)
+whatever `--grasp-frame` the HTTP response uses, since that is the frame the
+gripper mesh lives in. `--viser-top-k` controls how many grasps are drawn.
+Visualizer failures are logged and swallowed — they never affect a response.
 
 ### Trying it against live ROS 2 data
 

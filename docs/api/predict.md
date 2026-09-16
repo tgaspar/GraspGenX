@@ -289,6 +289,7 @@ Semantics:
 | `api_version` | string | Contract version, `"0.1.0"`. **Extra.** |
 | `gripper`, `grasp_frame`, `tcp_offset`, `planner`, `width_mode` | — | **Extras** echoing the server's configuration, so a grasp log is self-describing. |
 | `num_collision_rejected` | int | **Extra.** How many candidate grasps the `scene_points` collision filter dropped. |
+| `viser_url` | string or null | **Extra.** Where the live web visualizer is served, when the server was started with `--viser-port`; `null` otherwise. |
 
 ### Scores
 
@@ -386,6 +387,19 @@ Returns what the server is configured with. Call once at client startup.
 The first block is the fields the DexGraspNet 2.0 server also returns; the
 second is GraspGenX-specific and is what lets a client adapt automatically to
 whichever backend is running.
+
+### Live web visualizer
+
+Started with `--viser-port <port>`, the server also serves a
+[viser](https://viser.studio/) scene that is re-rendered on every `/predict`
+call: target cloud, scene clutter, the top-`--viser-top-k` grasps coloured by
+score, and a solid gripper mesh at the best one. Purely an inspection aid — it
+does not change any response, and a visualizer failure is logged and swallowed
+rather than turned into a 500.
+
+Poses are drawn in the GraspGenX native frame (+Z approach, +X jaw) regardless
+of `--grasp-frame`, because that is the frame the gripper mesh is defined in.
+`/config.viser_port` and `meta.viser_url` report whether it is running.
 
 ### `GET /version` — build metadata
 

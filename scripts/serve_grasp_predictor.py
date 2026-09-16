@@ -218,6 +218,29 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--model-commit", default="", help="Build tag reported via /version."
     )
+    parser.add_argument(
+        "--viser-port",
+        type=int,
+        default=None,
+        help="Serve a live viser web visualizer on this port. Every /predict "
+        "call re-renders the object cloud, the scene clutter and the top "
+        "grasps there, so you can inspect what the server answered in a "
+        "browser. Off unless set. Needs the container to expose the port "
+        "(--network host does).",
+    )
+    parser.add_argument(
+        "--viser-top-k",
+        type=int,
+        default=10,
+        help="How many grasps to draw in the visualizer.",
+    )
+    parser.add_argument(
+        "--viser-max-points",
+        type=int,
+        default=40000,
+        help="Per-cloud point budget for the visualizer, to keep the browser "
+        "responsive. Does not affect inference.",
+    )
 
     args = parser.parse_args(argv)
 
@@ -254,6 +277,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         tensorrt_precision=args.tensorrt_precision,
         model_commit=args.model_commit,
         warmup=args.warmup,
+        viser_port=args.viser_port,
+        viser_top_k=args.viser_top_k,
+        viser_max_points=args.viser_max_points,
     )
 
     app = rest_server.build_app()

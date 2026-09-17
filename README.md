@@ -376,6 +376,13 @@ either way — constrain `approach_axis` client-side for that half.
 best; widening it crowds the diffusion grasps out of the top-K. Details and
 the control experiment are in [`docs/api/predict.md`](docs/api/predict.md).
 
+> [!NOTE]
+> The client-side `approach_axis` cone referred to here and under
+> [Clutter](#clutter) is **not implemented** — neither in this repo nor in any
+> client shipped with it. Until something applies it, expect the diffusion
+> branch to keep proposing grasps that approach from underneath the support
+> surface.
+
 ### Clutter
 
 Passing `scene_points` alongside `point_cloud` makes the server collision-check

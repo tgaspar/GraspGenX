@@ -575,6 +575,47 @@ if len(scene_pc) > 16000:
     scene_pc = scene_pc[idx]
 ```
 
+### Send the cloud in a Z-up frame
+
+The server does no frame transformation, but GraspGenX is **not** frame-
+agnostic, so which frame you choose changes the grasps you get back.
+
+GraspMoE's OBB branch sweeps the faces of the object's oriented bounding box
+relative to the **input frame's +Z axis** — `graspmoe.py` hardcodes
+`z_world = [0, 0, 1]` as "up" and uses `center[2]` as height above the
+support. Send a cloud in a camera *optical* frame (+Z along the optical axis,
++Y down) and that branch dutifully generates "top-down" grasps along the
+optical axis, which is nowhere near the table normal.
+
+Measured on a banana on a table, with the camera 43° off vertical, tilt of the
+approach axis away from the true table normal (0° = straight down):
+
+| Cloud sent in | OBB branch | Diffusion branch | Usable (<30° from vertical) |
+|---|---|---|---|
+| camera optical frame | median **137°** | median 73° | 8 / 60 |
+| world frame (+Z up) | median **0°** | median 70° | **37 / 60** |
+| world frame tipped 90° about X | median 90° | median 83° | — |
+
+The third row is the control: the OBB branch tracks whatever the input frame
+calls +Z, while the diffusion branch barely moves. So the two branches fail
+differently and need different fixes:
+
+- **OBB branch — fix it by choosing the frame.** Transform the cloud to a
+  Z-up frame (`base_link`, `world`, …) with `tf2_ros` before calling
+  `/predict`, and grasps come back in that same frame ready to plan against.
+  This is free and it is the single highest-leverage change.
+- **Diffusion branch — it has no gravity prior at all.** It proposes
+  antipodal grasps all around the object, including from underneath, because
+  nothing in the object cloud says where the table is. No server setting
+  fixes this; constrain `approach_axis` client-side (see above), or send
+  `scene_points` and let the collision filter do it.
+
+`--moe-obb-density` tunes the OBB sweep (`sparse` default; `dense` and
+`dense-topandside` add positions and side-face approaches). On the banana,
+`dense-topandside` was *worse* — 30/60 usable versus 37/60 — because its
+side-face candidates crowd the diffusion grasps out of the top-K. Raise
+`num_grasps` if you want to widen the sweep without losing them.
+
 ### Watch out for client-side proximity filters
 
 A client that sanity-checks grasps by requiring `translation` to lie near the

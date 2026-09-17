@@ -154,6 +154,13 @@ class ServerState:
     planner: str = "graspmoe"
     num_diffusion_samples: int = 200
     oversample_factor: int = 4
+    # GraspMoE OBB-branch geometry. NOTE: this branch sweeps faces of the
+    # object's oriented bounding box defined against the *input frame's* +Z
+    # axis (graspmoe.py hardcodes z_world = [0, 0, 1]), so it only produces
+    # top-down grasps when the point cloud arrives in a Z-up frame.
+    moe_obb_density: str = "sparse"
+    moe_num_yaws: int = 36
+    moe_z_offsets_cm: tuple = (-8, -6, -4, -2, -1, 0)
     width_mode: str = "aperture"
     width_clearance: float = 0.01
     min_points: int = 128
@@ -677,6 +684,10 @@ def build_app() -> FastAPI:
             "gripper_max_width": STATE.max_aperture,
             "fingertip_depth": STATE.fingertip_depth,
             "planner": STATE.planner,
+            "moe_obb_density": STATE.moe_obb_density,
+            "moe_num_yaws": STATE.moe_num_yaws,
+            "moe_z_offsets_cm": list(STATE.moe_z_offsets_cm),
+            "obb_branch_up_axis": "input frame +Z",
             "width_mode": STATE.width_mode,
             "approach_axis_convention": STATE.approach_axis_convention,
             "collision_threshold": STATE.collision_threshold,
@@ -758,6 +769,9 @@ def build_app() -> FastAPI:
                 grasp_threshold=-1.0,
                 num_grasps=STATE.num_diffusion_samples,
                 topk_num_grasps=topk,
+                moe_obb_density=STATE.moe_obb_density,
+                moe_num_yaws=STATE.moe_num_yaws,
+                moe_z_offsets_cm=STATE.moe_z_offsets_cm,
             )
         except Exception as exc:
             logger.exception("Inference failed")
@@ -981,6 +995,9 @@ def initialise_state(
     planner: str = "graspmoe",
     num_diffusion_samples: int = 200,
     oversample_factor: int = 4,
+    moe_obb_density: str = "sparse",
+    moe_num_yaws: int = 36,
+    moe_z_offsets_cm: tuple = (-8, -6, -4, -2, -1, 0),
     width_mode: str = "aperture",
     width_clearance: float = 0.01,
     approach_axis_convention: str = "true_approach",
@@ -1084,6 +1101,9 @@ def initialise_state(
     STATE.planner = planner
     STATE.num_diffusion_samples = int(num_diffusion_samples)
     STATE.oversample_factor = int(oversample_factor)
+    STATE.moe_obb_density = moe_obb_density
+    STATE.moe_num_yaws = int(moe_num_yaws)
+    STATE.moe_z_offsets_cm = tuple(float(v) for v in moe_z_offsets_cm)
     STATE.width_mode = width_mode
     STATE.width_clearance = float(width_clearance)
     STATE.approach_axis_convention = approach_axis_convention

@@ -346,6 +346,21 @@ gripper base. `/config` reports `grasp_frame`, `approach_axis_local`,
 `jaw_axis_local`, `tcp_offset` and `grasp_reference` so a client can adapt
 automatically instead of hardcoding a convention.
 
+### Send the cloud in a Z-up frame
+
+The server never transforms frames, but GraspGenX is not frame-agnostic:
+GraspMoE's OBB branch treats the **input frame's +Z** as "up"
+(`graspmoe.py` hardcodes `z_world = [0, 0, 1]`). Feed it a camera optical
+frame and its "top-down" grasps follow the optical axis instead of the table
+normal. On a banana with the camera 43° off vertical, switching the input from
+`camera_frame` to a Z-up `world` frame took the OBB branch's median tilt from
+137° to 0° and usable grasps from 8/60 to 37/60.
+
+Transform to `base_link`/`world` with `tf2_ros` before calling `/predict`;
+grasps come back in that frame. The diffusion branch has no gravity prior
+either way — constrain `approach_axis` client-side for that half. Details and
+the control experiment are in [`docs/api/predict.md`](docs/api/predict.md).
+
 ### Clutter
 
 Passing `scene_points` alongside `point_cloud` makes the server collision-check

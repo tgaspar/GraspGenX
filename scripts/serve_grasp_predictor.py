@@ -136,6 +136,27 @@ def main(argv: Optional[List[str]] = None) -> int:
         "still leaves candidates to return.",
     )
     parser.add_argument(
+        "--moe-obb-density",
+        default="sparse",
+        choices=["sparse", "dense", "dense-topandside"],
+        help="[graspmoe] OBB sweep coverage. 'sparse': one centroid pose per "
+        "face. 'dense': positions along the OBB's long axis, top face only. "
+        "'dense-topandside': also sweeps the four side faces, adding "
+        "horizontal approaches.",
+    )
+    parser.add_argument(
+        "--moe-num-yaws",
+        type=int,
+        default=36,
+        help="[graspmoe] Yaw samples about the approach axis per OBB position.",
+    )
+    parser.add_argument(
+        "--moe-z-offsets-cm",
+        default="-8,-6,-4,-2,-1,0",
+        help="[graspmoe] Comma-separated standoffs (cm) along the approach "
+        "axis for OBB candidates.",
+    )
+    parser.add_argument(
         "--default-num-grasps",
         type=int,
         default=20,
@@ -261,6 +282,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         planner=args.planner,
         num_diffusion_samples=args.num_diffusion_samples,
         oversample_factor=args.oversample_factor,
+        moe_obb_density=args.moe_obb_density,
+        moe_num_yaws=args.moe_num_yaws,
+        moe_z_offsets_cm=tuple(
+            float(v) for v in str(args.moe_z_offsets_cm).split(",") if v.strip()
+        ),
         width_mode=args.width_mode,
         width_clearance=args.width_clearance,
         approach_axis_convention=args.approach_axis_convention,

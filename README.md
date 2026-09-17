@@ -305,6 +305,7 @@ docker run --rm --gpus all --ipc=host --network host \
     --gripper arx_x5 \
     --host 0.0.0.0 \
     --port 8000 \
+    --tcp-offset 0.12 \
     --viser-port 8080
 ```
 
@@ -314,6 +315,18 @@ Checkpoints and Gripper Assets](#setup-checkpoints-and-gripper-assets)); the
 bind mount above makes them visible inside the container. The model loads
 before the port opens, so a successful connection means the server is ready —
 roughly 40 s including the startup warmup inference.
+
+**Set `--tcp-offset` deliberately — the default will surprise you.** At
+`--tcp-offset 0` (the default) the server reports the gripper's **base link**,
+which on `arx_x5` sits about **11 cm away from the object**; the fingertips are
+14.3 cm further along the approach axis. Any client that sanity-checks a grasp
+by requiring its position to lie near the segmented object cloud will therefore
+reject *every* grasp, while the server happily reports a full list of
+0.98-scoring ones — a silent, expensive failure. `0.12` puts the reported point
+at the centre of the jaws (0.5 cm from the object cloud, in measurements on a
+real scene), which is what a client written against DexGraspNet 2.0 expects.
+Remember it composes with any offset the client applies afterwards. See
+[`docs/api/predict.md`](docs/api/predict.md) for the measured table.
 
 ### Endpoints
 
@@ -358,7 +371,9 @@ normal. On a banana with the camera 43° off vertical, switching the input from
 
 Transform to `base_link`/`world` with `tf2_ros` before calling `/predict`;
 grasps come back in that frame. The diffusion branch has no gravity prior
-either way — constrain `approach_axis` client-side for that half. Details and
+either way — constrain `approach_axis` client-side for that half.
+`--moe-obb-density` tunes the OBB sweep, but the `sparse` default measured
+best; widening it crowds the diffusion grasps out of the top-K. Details and
 the control experiment are in [`docs/api/predict.md`](docs/api/predict.md).
 
 ### Clutter

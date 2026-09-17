@@ -162,11 +162,53 @@ JSON object with the following fields.
 - **You already have a scene PC from your perception stack** → include
   everything that is NOT the target object.
 
-Tuning: `--collision-threshold` (default 0.02 m) sets how close a gripper
+Tuning: `--collision-threshold` (default 0.005 m) sets how close a gripper
 surface sample may come to a scene point before the grasp counts as colliding.
-`meta.num_collision_rejected` tells you how many were dropped; if that number
-is most of your candidates, either your `scene_points` still contain the target
-object, or the threshold is too aggressive.
+`meta.num_collision_rejected` tells you how many were dropped.
+
+### Why `scene_points` can return nothing
+
+**Do not send the support surface.** For a thin object lying on a table this
+filter rejects essentially everything, because a gripper that reaches the
+object is *genuinely* in near-contact with the table — the fingers pass within
+about a millimetre of it. Measured on a banana lying on a table, 200 candidate
+grasps, `arx_x5`:
+
+| Configuration | Grasps kept | Best score | Impossible (from-below) grasps kept |
+|---|---|---|---|
+| `scene_points` omitted | 200 / 200 | 0.983 | 74 |
+| default (thr 5 mm, excl 1 cm) | **3 / 200** | 0.969 | 0 |
+| thr 2 mm | 11 / 200 | 0.969 | 1 |
+| thr 1 mm | 100 / 200 | 0.983 | 29 |
+| exclusion radius 5 cm | 27 / 200 | 0.983 | 5 |
+| dominant plane removed from `scene_points` | 186 / 200 | 0.983 | 73 |
+
+Read the last two columns together. At the default the filter is working
+correctly — it removes all 74 physically impossible grasps that approach from
+underneath the table — but it takes almost every good grasp with them, and
+which of the ~3 survive is a coin flip from the diffusion sampler, so the same
+request can legitimately return 0. Loosening the threshold trades that
+directly back for impossible grasps. Stripping the support plane looks like a
+fix and is not: the table *is* the obstacle that was correctly blocking those
+74, so removing it is equivalent to not filtering at all.
+
+The conclusion is that geometric collision checking is the wrong tool for
+"which side of the table am I on". Use it for what it is good at, and use a
+different mechanism for approach direction:
+
+- **Isolated object on a surface → omit `scene_points`.** This is the common
+  case and the right default. The server logs a warning when the filter keeps
+  almost nothing, so check `run.log` if a client starts getting empty results.
+- **Bin picking / dense clutter → send `scene_points`**, containing the other
+  objects and the bin walls. That is real geometry the gripper must avoid and
+  the filter handles it well.
+- **To reject upside-down approaches, constrain the approach direction, not
+  the geometry.** The client knows which way is up in its own frame; the
+  server deliberately does not (it never transforms frames). One line:
+  `if np.dot(g["approach_axis"], up_in_camera_frame) > -0.3: skip`. This is
+  robust, free, and does not fight with the collision filter.
+- `--no-scene-collision-filter` makes the server ignore `scene_points`
+  entirely, if you would rather not change the client.
 
 ### Encoded-array subschema for `point_cloud`
 

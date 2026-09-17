@@ -350,11 +350,18 @@ automatically instead of hardcoding a convention.
 
 Passing `scene_points` alongside `point_cloud` makes the server collision-check
 each predicted grasp's gripper mesh against the surrounding geometry and drop
-the blocked ones. This is most useful for bin picking and dense clutter. For an
-isolated object on a table, leave it out: the fingers legitimately come within
-a millimeter or two of the support surface, so a geometric filter rejects
-almost everything unless you strip the support plane client-side first.
-`meta.num_collision_rejected` tells you how many were dropped.
+the blocked ones. Use it for **bin picking and dense clutter**.
+
+**Do not send the support surface.** For an isolated object on a table the
+filter rejects almost everything — the fingers legitimately pass within about a
+millimetre of the tabletop — so the endpoint can return an empty list even
+though the model was perfectly happy. Omit `scene_points` in that case. To
+reject upside-down approaches, constrain `approach_axis` client-side instead;
+the client knows which way is up and the server deliberately does not.
+`meta.num_collision_rejected` reports how many were dropped, and the server
+logs a warning when the filter keeps almost nothing. See
+[`docs/api/predict.md`](docs/api/predict.md) for the measured numbers behind
+this advice.
 
 ### Web visualizer
 

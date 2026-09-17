@@ -479,18 +479,39 @@ def _dump_npz(
 # ---------------------------------------------------------------------------
 
 
-def _start_viser(port: int) -> Any:
-    """Bring up the viser web server. Returns None if it cannot start —
-    visualization must never prevent the inference server from serving."""
+def _start_viser(port: int) -> tuple:
+    """Bring up the viser web server.
+
+    Returns ``(server, actual_port)``; ``(None, None)`` if it cannot start —
+    visualization must never prevent the inference server from serving.
+
+    viser silently falls back to the next free port when the requested one is
+    taken (typically: a second container already holds it). Reporting the
+    port we *asked* for would then point users at somebody else's scene, so
+    the bound port is read back and used everywhere.
+    """
     try:
         from graspgenx.utils.viser_utils import create_visualizer
 
         vis = create_visualizer(port=port)
-        logger.info(f"Viser visualizer available at http://<host>:{port}")
-        return vis
+        actual = port
+        try:
+            actual = int(vis.get_port())
+        except Exception:  # noqa: BLE001
+            logger.debug("viser did not report its port; assuming the requested one.")
+        if actual != port:
+            logger.warning(
+                f"Viser could not bind port {port} (already in use) and fell "
+                f"back to {actual}. Another GraspGenX container is probably "
+                f"holding {port}; the visualizer for THIS server is at "
+                f"http://<host>:{actual}."
+            )
+        else:
+            logger.info(f"Viser visualizer available at http://<host>:{actual}")
+        return vis, actual
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"Could not start the viser visualizer on port {port}: {exc}")
-        return None
+        return None, None
 
 
 def _update_viser(
@@ -786,9 +807,25 @@ def build_app() -> FastAPI:
                     batch_size=STATE.collision_batch_size,
                 )
                 num_collision_rejected = int((~free).sum())
+                n_before = len(poses)
                 poses = poses[free]
                 scores = scores[free]
                 tags = [t for t, keep in zip(tags, free) if keep]
+                # Over-filtering is the single most common way this endpoint
+                # returns nothing while the model was perfectly happy, and it
+                # is invisible from the client side. Say so, loudly.
+                if n_before and len(poses) <= max(2, n_before // 100):
+                    logger.warning(
+                        f"[{request_id}] scene collision filter kept only "
+                        f"{len(poses)}/{n_before} grasps. If the target is an "
+                        f"isolated object resting on a surface, this is "
+                        f"expected: the fingers must pass within ~1 mm of the "
+                        f"support plane, so almost every viable grasp counts "
+                        f"as a collision. Omit `scene_points`, start the "
+                        f"server with --no-scene-collision-filter, or send "
+                        f"only the real obstacles (not the table) as "
+                        f"`scene_points`."
+                    )
             except Exception as exc:
                 # A collision-filter failure must not sink the whole request —
                 # degrade to unfiltered results and say so in the log.
@@ -1083,8 +1120,9 @@ def initialise_state(
         STATE.viser_top_k = int(viser_top_k)
         STATE.viser_max_points = int(viser_max_points)
         STATE.viser_lock = threading.Lock()
-        STATE.viser_server = _start_viser(int(viser_port))
+        STATE.viser_server, actual_port = _start_viser(int(viser_port))
         if STATE.viser_server is not None:
+            STATE.viser_port = actual_port
             try:
                 STATE.viser_status = STATE.viser_server.gui.add_markdown(
                     "Waiting for the first `/predict` request…"

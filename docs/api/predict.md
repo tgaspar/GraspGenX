@@ -469,7 +469,7 @@ Four behavioural differences are worth knowing, three of which have a CLI flag:
 | # | Difference | What to do |
 |---|---|---|
 | 1 | **Grasp-frame axes.** GraspGenX is natively +Z approach / +X jaw; DexGraspNet 2.0 is +X approach / +Y jaw. | Default `--grasp-frame dexgraspnet2` already matches DexGraspNet 2.0. Use `--grasp-frame tcp_z_approach` if your robot TCP is +Z approach / +Y jaw and you'd rather drop the client-side fixup. |
-| 2 | **Grasp origin.** GraspGenX returns the gripper *base link*; DexGraspNet 2.0 returns the midpoint between the jaws at the finger base. These are different physical points (0.143 m apart on `arx_x5`). | Set `--tcp-offset` to shift along the approach axis, or `--tcp-at-fingertip`. There is no automatic equivalence — the two models describe different hands, so pick the offset that matches *your* hand's TCP. |
+| 2 | **Grasp origin.** GraspGenX returns the gripper *base link*; DexGraspNet 2.0 returns the midpoint between the jaws at the finger base. These are different physical points (0.143 m apart on `arx_x5`), and the GraspGenX default sits ~11 cm *off* the object. See [the warning below](#watch-out-for-client-side-proximity-filters). | Set `--tcp-offset` to shift along the approach axis, or `--tcp-at-fingertip`. There is no automatic equivalence — the two models describe different hands, so pick the offset that matches *your* hand's TCP. |
 | 3 | **`approach_axis`.** The DexGraspNet 2.0 server returns `rotation_matrix @ [0,0,1]` (its frame's +Z), even though its documented approach axis is +X — so its `approach_axis` is not actually the approach direction. GraspGenX returns the true approach direction. | Default `--approach-axis-convention true_approach` is the correct one. If your client is calibrated against DexGraspNet 2.0's behaviour, `--approach-axis-convention frame_z` reproduces it exactly. |
 | 4 | **Score range.** GraspGenX: `[0, 1]`. DexGraspNet 2.0: unbounded (tens). | No flag — the scores come from different heads. Branch on `/config.backend`, or use top-K instead of an absolute `min_score`. |
 
@@ -574,6 +574,31 @@ if len(scene_pc) > 16000:
     idx = np.random.choice(len(scene_pc), 16000, replace=False)
     scene_pc = scene_pc[idx]
 ```
+
+### Watch out for client-side proximity filters
+
+A client that sanity-checks grasps by requiring `translation` to lie near the
+segmented object cloud will reject **every** GraspGenX grasp at the default
+`--tcp-offset 0`. That default reports the gripper **base link**, which for
+`arx_x5` sits about **11 cm** from the object — the fingertips are 14.3 cm
+further along the approach axis. Measured against a 5 cm gate:
+
+| `--tcp-offset` | Reported point | Median distance to the target cloud | Passes a 5 cm gate |
+|---|---|---|---|
+| `0.0` (default) | gripper base link | 11.7 cm | **0 / 20** |
+| `0.09` | base of the jaws | 2.4 cm | 20 / 20 |
+| `0.12` | centre of the jaws | 0.5 cm | 20 / 20 |
+| `0.143` (`--tcp-at-fingertip`) | fingertip plane | 1.3 cm | 20 / 20 |
+
+The same client works unchanged against DexGraspNet 2.0, whose origin is the
+jaw midpoint and therefore already sits on the object. This is a silent
+failure: the server returns a full list of high-scoring grasps and the client
+reports zero. If grasps vanish client-side, compare `translation` against
+`/config.grasp_reference` and `/config.fingertip_depth` before looking
+anywhere else.
+
+Set `--tcp-offset` so the reported point is one that actually lies on the
+object, and remember it composes with any offset the client applies afterwards.
 
 ### Handling the response in your ROS 2 node
 
